@@ -1,0 +1,54 @@
+{
+  "name": "tablecam",
+  "version": "0.3.0",
+  "private": true,
+  "main": "public/main.js",
+  "homepage": ".",
+  "description": "Floating camera desktop app with settings panel and transparent float window.",
+  "author": "TableCam",
+  "license": "MIT",
+  "scripts": {
+    "start": "react-scripts start",
+    "desktop": "npm run build && npm run build:electron && electron .",
+    "build": "react-scripts build",
+    "build:electron": "tsc public/*.ts --outDir public --skipLibCheck --esModuleInterop --module commonjs --target ES2020 --moduleResolution node",
+    "make": "npm run build && npm run build:electron && electron-forge make",
+    "make:zip": "npm run build && npm run build:electron && electron-forge make --targets @electron-forge/maker-zip",
+    "release:zip": "npm run make:zip && node scripts/collect-release-zip.cjs",
+    "package": "npm run build && npm run build:electron && electron-forge package"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "^0.10.14",
+    "bootstrap": "^5.3.2",
+    "ffmpeg-static": "^5.2.0",
+    "lucide-react": "^0.544.0",
+    "react": "^18.2.0",
+    "react-bootstrap": "^2.9.2",
+    "react-dom": "^18.2.0",
+    "react-scripts": "5.0.1"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "^7.2.0",
+    "@electron-forge/maker-deb": "^7.11.1",
+    "@electron-forge/maker-rpm": "^7.11.1",
+    "@electron-forge/maker-squirrel": "^7.11.1",
+    "@electron-forge/maker-zip": "^7.11.1",
+    "@types/node": "^20.11.19",
+    "@types/react": "^18.2.57",
+    "@types/react-dom": "^18.2.19",
+    "electron": "^28.1.0",
+    "typescript": "4.9.5"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}
