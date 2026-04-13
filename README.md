@@ -8,9 +8,9 @@ It provides a floating camera overlay (always on top) and a practical screen rec
 ## Download
 
 - Latest macOS zip package: [TableCam Releases](https://github.com/claireww2025/TableCam/releases)
-- Current release file name: `TableCam-v0.3.0-darwin-x64.zip`
+- Current release file name: `TableCam-v0.4.18-darwin-x64.zip`
 - Direct link works after release publish:  
-  `https://github.com/claireww2025/TableCam/releases/latest/download/TableCam-v0.3.0-darwin-x64.zip`
+  `https://github.com/claireww2025/TableCam/releases/latest/download/TableCam-v0.4.18-darwin-x64.zip`
 
 > **Platform note:** The packaged app currently supports **macOS only**.  
 > Windows and Linux builds are not officially supported in this repository yet.
@@ -223,7 +223,7 @@ If permissions were denied earlier, enable them manually and restart the app.
 
 ## Contributing
 
-Please read [`CONTRIBUTING.md`](./CONTRIBUTING.md) before opening issues or pull requests.
+Issues and pull requests are welcome; keep changes focused and match existing code style.
 
 ---
 

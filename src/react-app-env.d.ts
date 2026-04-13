@@ -38,9 +38,11 @@ interface ElectronAPI {
     channel: "save-recording",
     payload: {
       bytes: number[];
-      mode: "screen" | "camera";
+      mode: "region" | "camera" | "both";
       requestedFormat: "auto" | "mp4" | "webm-vp9" | "webm-vp8" | "webm" | "mov";
       sourceExt: "mp4" | "webm";
+      micBytes?: number[];
+      micSourceExt?: "mp4" | "webm";
     }
   ): Promise<{ ok: boolean; savedPath: string; converted: boolean; canceled?: boolean; error?: string; targetExt?: string }>;
   invoke(channel: "check-ffmpeg", payload?: undefined): Promise<{ ok: boolean; path: string }>;
@@ -52,6 +54,14 @@ interface ElectronAPI {
     channel: "request-macos-camera-access",
     payload?: undefined
   ): Promise<{ granted: boolean; camera: string }>;
+  invoke(
+    channel: "macos-microphone-access-status",
+    payload?: undefined
+  ): Promise<{ platform: string; microphone: string }>;
+  invoke(
+    channel: "request-macos-microphone-access",
+    payload?: undefined
+  ): Promise<{ granted: boolean; microphone: string }>;
   on(channel: IpcChannel, listener: (payload?: unknown) => void): () => void;
 }
 

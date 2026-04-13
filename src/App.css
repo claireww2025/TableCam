@@ -284,15 +284,10 @@ body.selector-route #root {
   width: 100vw;
   height: 100vh;
   background: transparent;
+  /* Keep the full frameless window draggable except explicit no-drag controls (toolbar buttons). */
   -webkit-app-region: drag;
   position: relative;
   overflow: hidden;
-}
-
-.float-window-drag-area {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
 }
 
 .float-window-toolbar {
@@ -340,6 +335,7 @@ body.selector-route #root {
   position: relative;
   z-index: 10;
   background: transparent;
+  /* Clicks pass through to the root drag region; do not set `no-drag` on this full-size wrapper or the window cannot move. */
   pointer-events: none;
 }
 

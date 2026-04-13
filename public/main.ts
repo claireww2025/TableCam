@@ -247,6 +247,20 @@ async function promptMacosCameraAccessIfNeeded() {
   }
 }
 
+async function promptMacosMicrophoneAccessIfNeeded() {
+  if (process.platform !== "darwin") {
+    return;
+  }
+  try {
+    const status = systemPreferences.getMediaAccessStatus("microphone");
+    if (status === "not-determined") {
+      await systemPreferences.askForMediaAccess("microphone");
+    }
+  } catch {
+    // Non-fatal; renderer can still request via getUserMedia.
+  }
+}
+
 function createFloatWindow() {
   floatWindow = new BrowserWindow({
     width: WINDOW_SIZES.medium,
@@ -330,12 +344,19 @@ function createSelectorWindow(aspect: string) {
 
 async function saveRecording(payload: {
   bytes: number[];
-  mode: "screen" | "camera";
+  mode: "region" | "camera" | "both";
   requestedFormat: "auto" | "mp4" | "webm-vp9" | "webm-vp8" | "webm" | "mov";
   sourceExt: "mp4" | "webm";
+  micBytes?: number[];
+  micSourceExt?: "mp4" | "webm";
 }) {
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
-  const baseName = payload.mode === "camera" ? `tablecam-camera-${ts}` : `tablecam-screen-${ts}`;
+  const baseName =
+    payload.mode === "camera"
+      ? `tablecam-camera-${ts}`
+      : payload.mode === "both"
+        ? `tablecam-desktop-camera-${ts}`
+        : `tablecam-desktop-region-${ts}`;
 
   const targetExt =
     payload.requestedFormat === "mov"
@@ -372,13 +393,22 @@ async function saveRecording(payload: {
   }
   const outputPath = savePick.filePath;
 
-  if (targetExt === payload.sourceExt) {
+  const hasSeparateMic =
+    Array.isArray(payload.micBytes) &&
+    payload.micBytes.length > 0 &&
+    (payload.micSourceExt === "webm" || payload.micSourceExt === "mp4");
+
+  if (targetExt === payload.sourceExt && !hasSeparateMic) {
     await fs.writeFile(outputPath, Buffer.from(payload.bytes));
     return { ok: true, savedPath: outputPath, converted: false };
   }
 
   const tempSourcePath = path.join(app.getPath("temp"), `${baseName}.${payload.sourceExt}`);
   await fs.writeFile(tempSourcePath, Buffer.from(payload.bytes));
+  const tempMicPath = hasSeparateMic ? path.join(app.getPath("temp"), `${baseName}-mic.${payload.micSourceExt}`) : "";
+  if (hasSeparateMic) {
+    await fs.writeFile(tempMicPath, Buffer.from(payload.micBytes!));
+  }
   const ffmpegCmd = await resolveFfmpegPath();
   if (!ffmpegCmd) {
     return {
@@ -390,56 +420,59 @@ async function saveRecording(payload: {
     };
   }
   try {
-    const args =
-      targetExt === "mp4"
-        ? [
-            "-y",
-            "-i",
-            tempSourcePath,
-            "-map",
-            "0:v:0",
-            "-map",
-            "0:a?",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "22",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "128k",
-            "-movflags",
-            "+faststart",
-            outputPath
-          ]
-        : [
-            "-y",
-            "-i",
-            tempSourcePath,
-            "-map",
-            "0:v:0",
-            "-map",
-            "0:a?",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "22",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "128k",
-            outputPath
-          ];
+    const sourceArgs = hasSeparateMic ? ["-i", tempSourcePath, "-i", tempMicPath] : ["-i", tempSourcePath];
+    const mapArgs = hasSeparateMic ? ["-map", "0:v:0", "-map", "1:a:0"] : ["-map", "0:v:0", "-map", "0:a?"];
+    let args: string[];
+    if (targetExt === "mp4" || targetExt === "mov") {
+      args = [
+        "-y",
+        ...sourceArgs,
+        ...mapArgs,
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "22",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        ...(targetExt === "mp4" ? ["-movflags", "+faststart"] : []),
+        outputPath
+      ];
+    } else {
+      // Keep WebM as WebM codecs; this path is used when merging backup mic into webm outputs.
+      args = [
+        "-y",
+        ...sourceArgs,
+        ...mapArgs,
+        "-c:v",
+        "libvpx-vp9",
+        "-b:v",
+        "0",
+        "-crf",
+        "33",
+        "-row-mt",
+        "1",
+        "-deadline",
+        "realtime",
+        "-cpu-used",
+        "5",
+        "-c:a",
+        "libopus",
+        "-b:a",
+        "128k",
+        outputPath
+      ];
+    }
     await execFileAsync(ffmpegCmd, args);
     await fs.unlink(tempSourcePath).catch(() => undefined);
+    if (tempMicPath) {
+      await fs.unlink(tempMicPath).catch(() => undefined);
+    }
     return { ok: true, savedPath: outputPath, converted: true };
   } catch {
     // Keep source file and inform renderer conversion is unavailable.
@@ -595,6 +628,31 @@ function setupIpc() {
     const granted = await systemPreferences.askForMediaAccess("camera");
     return { granted, camera: granted ? ("granted" as const) : ("denied" as const) };
   });
+
+  ipcMain.handle("macos-microphone-access-status", () => {
+    if (process.platform !== "darwin") {
+      return { platform: process.platform, microphone: "not-applicable" as const };
+    }
+    return {
+      platform: "darwin" as const,
+      microphone: systemPreferences.getMediaAccessStatus("microphone")
+    };
+  });
+
+  ipcMain.handle("request-macos-microphone-access", async () => {
+    if (process.platform !== "darwin") {
+      return { granted: true, microphone: "not-applicable" as const };
+    }
+    const before = systemPreferences.getMediaAccessStatus("microphone");
+    if (before === "granted") {
+      return { granted: true, microphone: "granted" as const };
+    }
+    if (before === "denied") {
+      return { granted: false, microphone: "denied" as const };
+    }
+    const granted = await systemPreferences.askForMediaAccess("microphone");
+    return { granted, microphone: granted ? ("granted" as const) : ("denied" as const) };
+  });
 }
 
 app.whenReady().then(() => {
@@ -604,6 +662,7 @@ app.whenReady().then(() => {
   createFloatWindow();
   raiseFloatAboveRegionSelector();
   void promptMacosCameraAccessIfNeeded();
+  void promptMacosMicrophoneAccessIfNeeded();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

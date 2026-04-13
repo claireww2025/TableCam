@@ -18,6 +18,8 @@ module.exports = {
     asar: true,
     extraResource,
     ignore: [
+      /(^|\/)\.git($|\/)/,
+      /(^|\/)\.github($|\/)/,
       /(^|\/)src($|\/)/,
       /(^|\/)release($|\/)/,
       /(^|\/)out($|\/)/,
@@ -27,7 +29,9 @@ module.exports = {
       /(^|\/)node_modules\/\.cache($|\/)/,
       /(^|\/)public\/.*\.ts$/,
       /(^|\/)tsconfig\.json$/,
-      /(^|\/)README(\.md)?$/i
+      /(^|\/)README(\.md)?$/i,
+      /(^|\/)CONTRIBUTING(\.md)?$/i,
+      /(^|\/)build\/.*\.map$/i
     ],
     // Required on macOS 10.14+ or getUserMedia fails with permission denied (no system prompt text).
     extendInfo: {
@@ -35,7 +39,7 @@ module.exports = {
       NSCameraUsageDescription:
         "TableCam uses your camera for the floating preview, optional picture-in-picture in recordings, and virtual backgrounds.",
       NSMicrophoneUsageDescription:
-        "TableCam can record microphone audio when you enable it for screen recordings.",
+        "TableCam can record microphone audio when you enable it for screen or camera recordings.",
       NSScreenCaptureUsageDescription:
         "TableCam records the desktop region you choose for screen recording."
     }

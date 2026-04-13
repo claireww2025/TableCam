@@ -234,7 +234,15 @@ export default function FloatWindow({ settings }: FloatWindowProps) {
     }
     video.srcObject = mediaStream;
     if (mediaStream) {
-      void video.play().catch(() => undefined);
+      const tryPlay = () => void video.play().catch(() => undefined);
+      tryPlay();
+      video.addEventListener("loadedmetadata", tryPlay);
+      video.addEventListener("canplay", tryPlay);
+      return () => {
+        video.removeEventListener("loadedmetadata", tryPlay);
+        video.removeEventListener("canplay", tryPlay);
+        video.srcObject = null;
+      };
     }
     return () => {
       video.srcObject = null;
@@ -534,7 +542,6 @@ export default function FloatWindow({ settings }: FloatWindowProps) {
 
   return (
     <div className="float-window-root">
-      <div className="float-window-drag-area" aria-hidden />
       <div className="float-window-toolbar">
         <button
           className="float-window-toolbtn"
@@ -561,6 +568,7 @@ export default function FloatWindow({ settings }: FloatWindowProps) {
           className={`camera-video ${hideVideo ? "camera-video--hidden" : ""}`}
           muted
           playsInline
+          autoPlay
           style={{ filter: hideVideo || previewFilters === "none" ? "none" : previewFilters }}
         />
         <canvas

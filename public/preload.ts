@@ -39,7 +39,9 @@ const electronAPI = {
       | "save-recording"
       | "check-ffmpeg"
       | "macos-camera-access-status"
-      | "request-macos-camera-access",
+      | "request-macos-camera-access"
+      | "macos-microphone-access-status"
+      | "request-macos-microphone-access",
     payload?: unknown
   ) => {
     return ipcRenderer.invoke(channel, payload);

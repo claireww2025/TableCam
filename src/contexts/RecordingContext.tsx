@@ -1,7 +1,13 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useCameraSettings } from "./CameraContext";
 
-export type RecordMode = "screen" | "camera";
+/** Red-frame desktop crop | camera feed only | cropped desktop with camera PIP */
+export type RecordMode = "region" | "camera" | "both";
+export type RecordingAudioSource = "none" | "mic" | "system" | "both";
+
+function isDesktopRecordMode(mode: RecordMode): boolean {
+  return mode === "region" || mode === "both";
+}
 export type AspectPreset = "free" | "16:9" | "9:16" | "4:3" | "3:4";
 export type RecordingFormat = "auto" | "mov" | "mp4" | "webm-vp9" | "webm-vp8" | "webm";
 
@@ -97,17 +103,17 @@ function toUserError(err: unknown, mode: RecordMode): string {
     }
   }
   if (name === "NotSupportedError") {
-    return mode === "screen"
+    return isDesktopRecordMode(mode)
       ? `Screen capture constraints are not supported by this runtime. The app now retries with compatibility mode automatically. If it still fails, update Electron runtime and retry.${detail}`
       : `Requested media constraints are not supported by this runtime.${detail}`;
   }
   if (name === "NotAllowedError" || name === "PermissionDeniedError") {
-    return mode === "screen"
+    return isDesktopRecordMode(mode)
       ? `Screen recording permission denied. Enable Screen Recording for the app that launches Electron in System Settings > Privacy & Security > Screen Recording, then restart.${detail}`
       : `Camera permission denied. Enable Camera access in System Settings > Privacy & Security > Camera, then restart.${detail}`;
   }
   if (name === "NotFoundError" || name === "DevicesNotFoundError") {
-    return mode === "screen"
+    return isDesktopRecordMode(mode)
       ? `No display source found. Try choosing an active screen/window again.${detail}`
       : `Selected camera not found. Re-select a camera in the Camera panel.${detail}`;
   }
@@ -117,7 +123,7 @@ function toUserError(err: unknown, mode: RecordMode): string {
   if (name === "AbortError") {
     return `Capture selection was cancelled.${detail}`;
   }
-  return mode === "screen"
+  return isDesktopRecordMode(mode)
     ? `Failed to start screen recording. Check permissions and desktop source.${detail}`
     : `Failed to start camera recording. Check camera permissions and selected camera.${detail}`;
 }
@@ -157,16 +163,27 @@ function lockCropToAspectInSource(
   return { sx, sy, sw, sh };
 }
 
-function pickRecordingMimeByPreference(format: RecordingFormat): { mimeType: string; ext: "mp4" | "webm" } {
+function pickRecordingMimeByPreference(
+  format: RecordingFormat,
+  hasAudioTrack = false
+): { mimeType: string; ext: "mp4" | "webm" } {
   const support = (m: string) => MediaRecorder.isTypeSupported(m);
-  const mp4 = ["video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4;codecs=h264,aac", "video/mp4"];
-  const webmVp9 = ["video/webm;codecs=vp9"];
-  const webmVp8 = ["video/webm;codecs=vp8"];
-  const webm = ["video/webm"];
+  const mp4 = hasAudioTrack
+    ? ["video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4;codecs=h264,aac", "video/mp4"]
+    : ["video/mp4;codecs=avc1.42E01E", "video/mp4;codecs=h264", "video/mp4"];
+  const webmVp9 = hasAudioTrack ? ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp9"] : ["video/webm;codecs=vp9"];
+  const webmVp8 = hasAudioTrack ? ["video/webm;codecs=vp8,opus", "video/webm;codecs=vp8"] : ["video/webm;codecs=vp8"];
+  const webm = hasAudioTrack ? ["video/webm;codecs=vp8,opus", "video/webm;codecs=opus", "video/webm"] : ["video/webm"];
 
   const pick = (list: string[]) => list.find((m) => support(m));
 
+  const bestWebm = pick(webmVp9) || pick(webmVp8) || pick(webm);
+
   if (format === "mov" || format === "mp4") {
+    // Electron's MP4 recorder path is often video-only; capture as WebM with Opus and convert on save.
+    if (hasAudioTrack && bestWebm) {
+      return { mimeType: bestWebm, ext: "webm" };
+    }
     return { mimeType: pick(mp4) || "video/webm", ext: pick(mp4) ? "mp4" : "webm" };
   }
   if (format === "webm-vp9") {
@@ -179,7 +196,9 @@ function pickRecordingMimeByPreference(format: RecordingFormat): { mimeType: str
     return { mimeType: pick(webm) || "video/webm", ext: "webm" };
   }
 
-  const auto = pick(mp4) || pick(webmVp9) || pick(webmVp8) || pick(webm) || "video/webm";
+  const auto = hasAudioTrack
+    ? bestWebm || pick(mp4) || "video/webm"
+    : pick(mp4) || bestWebm || "video/webm";
   return { mimeType: auto, ext: auto.includes("mp4") ? "mp4" : "webm" };
 }
 
@@ -197,7 +216,7 @@ async function preflightScreenCaptureCompatibility(): Promise<ScreenPreflightRes
   } catch (err) {
     const e = err as DOMException | Error | undefined;
     if (e?.name !== "NotSupportedError" && e?.name !== "TypeError") {
-      return { ok: false, detail: toUserError(err, "screen") };
+      return { ok: false, detail: toUserError(err, "region") };
     }
   }
 
@@ -211,7 +230,7 @@ async function preflightScreenCaptureCompatibility(): Promise<ScreenPreflightRes
   } catch (err2) {
     const e2 = err2 as DOMException | Error | undefined;
     if (e2?.name !== "NotSupportedError" && e2?.name !== "TypeError") {
-      return { ok: false, detail: toUserError(err2, "screen") };
+      return { ok: false, detail: toUserError(err2, "region") };
     }
   }
 
@@ -239,10 +258,8 @@ export interface RecordingContextValue {
   setAspect: (a: AspectPreset) => void;
   format: RecordingFormat;
   setFormat: (f: RecordingFormat) => void;
-  micEnabled: boolean;
-  setMicEnabled: (v: boolean) => void;
-  pipEnabled: boolean;
-  setPipEnabled: (v: boolean) => void;
+  audioSource: RecordingAudioSource;
+  setAudioSource: (v: RecordingAudioSource) => void;
   sessionActive: boolean;
   capturePaused: boolean;
   elapsedLabel: string;
@@ -272,12 +289,11 @@ export function useRecording(): RecordingContextValue {
 export function RecordingProvider({ children }: { children: React.ReactNode }) {
   const { settings } = useCameraSettings();
   const cameraDeviceId = settings.deviceId;
-  const [mode, setMode] = useState<RecordMode>("screen");
+  const [mode, setMode] = useState<RecordMode>("region");
   const [aspect, setAspect] = useState<AspectPreset>("16:9");
   const [format, setFormat] = useState<RecordingFormat>("mov");
   const [cropRect, setCropRect] = useState<CropRect>(fitCenteredRect("16:9"));
-  const [micEnabled, setMicEnabled] = useState(false);
-  const [pipEnabled, setPipEnabled] = useState(false);
+  const [audioSource, setAudioSource] = useState<RecordingAudioSource>("mic");
   const [recording, setRecording] = useState(false);
   const [capturePaused, setCapturePaused] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -320,12 +336,12 @@ export function RecordingProvider({ children }: { children: React.ReactNode }) {
 
   const getCameraStream = async (profile: "default" | "pip" = "default") => {
     const pipConstraints: MediaTrackConstraints = {
-      width: { ideal: 640, max: 960 },
-      height: { ideal: 480, max: 720 },
-      frameRate: { ideal: 24, max: 30 }
+      width: { ideal: 480, max: 640 },
+      height: { ideal: 360, max: 480 },
+      frameRate: { ideal: 20, max: 24 }
     };
     const defaultConstraints: MediaTrackConstraints = {
-      frameRate: { ideal: 30, max: 30 }
+      frameRate: { ideal: 24, max: 24 }
     };
     const mergedVideo = (base: MediaTrackConstraints): MediaTrackConstraints =>
       cameraDeviceId ? { ...base, deviceId: { exact: cameraDeviceId } } : base;
@@ -342,6 +358,26 @@ export function RecordingProvider({ children }: { children: React.ReactNode }) {
       });
     }
   };
+
+  const getMicStream = async () => {
+    try {
+      return await navigator.mediaDevices.getUserMedia({
+        video: false,
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1
+        }
+      });
+    } catch {
+      // Some drivers/runtime combos reject advanced audio constraints.
+      return navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+    }
+  };
+
+  const wantsMicAudio = (source: RecordingAudioSource) => source === "mic" || source === "both";
+  const wantsSystemAudio = (source: RecordingAudioSource) => source === "system" || source === "both";
 
   const runPreflight = async () => {
     if (checking || recording) {
@@ -364,15 +400,23 @@ export function RecordingProvider({ children }: { children: React.ReactNode }) {
       guide.push("Open Camera panel and select a preferred camera device.");
     }
 
-    const screenCheck = await preflightScreenCaptureCompatibility();
-    items.push({
-      label: "Screen capture permission",
-      ok: screenCheck.ok,
-      detail: screenCheck.detail
-    });
-    if (!screenCheck.ok) {
-      guide.push("macOS: System Settings > Privacy & Security > Screen Recording, enable your terminal/IDE, then restart app.");
-      guide.push("Windows: allow screen sharing in prompt; ensure no policy blocks capture.");
+    if (isDesktopRecordMode(mode)) {
+      const screenCheck = await preflightScreenCaptureCompatibility();
+      items.push({
+        label: "Screen capture permission",
+        ok: screenCheck.ok,
+        detail: screenCheck.detail
+      });
+      if (!screenCheck.ok) {
+        guide.push("macOS: System Settings > Privacy & Security > Screen Recording, enable your terminal/IDE, then restart app.");
+        guide.push("Windows: allow screen sharing in prompt; ensure no policy blocks capture.");
+      }
+    } else {
+      items.push({
+        label: "Screen capture permission",
+        ok: true,
+        detail: "Not required for camera-only recording."
+      });
     }
 
     try {
@@ -393,7 +437,7 @@ export function RecordingProvider({ children }: { children: React.ReactNode }) {
       guide.push("Close Zoom/Meet/OBS if camera is occupied.");
     }
 
-    if (mode === "screen" && micEnabled) {
+    if (wantsMicAudio(audioSource)) {
       try {
         const mic = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
         items.push({
@@ -409,6 +453,31 @@ export function RecordingProvider({ children }: { children: React.ReactNode }) {
           detail: "Microphone not available or permission denied (recording can continue without mic)."
         });
         guide.push("macOS: System Settings > Privacy & Security > Microphone, enable your terminal/IDE.");
+      }
+    }
+
+    if (isDesktopRecordMode(mode) && wantsSystemAudio(audioSource)) {
+      try {
+        const sys = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+        const ok = sys.getAudioTracks().length > 0;
+        items.push({
+          label: "System audio capture",
+          ok,
+          detail: ok
+            ? `System audio track available (${sys.getAudioTracks().length} track).`
+            : "No system audio track detected from selected source."
+        });
+        sys.getTracks().forEach((t) => t.stop());
+        if (!ok) {
+          guide.push("Try selecting a window/tab source that supports audio, or switch audio source to Microphone.");
+        }
+      } catch {
+        items.push({
+          label: "System audio capture",
+          ok: false,
+          detail: "System audio capture denied or unsupported by this source/runtime."
+        });
+        guide.push("If system audio is unavailable, switch audio source to Microphone.");
       }
     }
 
@@ -459,10 +528,11 @@ export function RecordingProvider({ children }: { children: React.ReactNode }) {
     setChecking(false);
   };
 
-  const ensureDisplayStream = async (): Promise<MediaStream> => {
+  const ensureDisplayStream = async (includeAudio = false): Promise<MediaStream> => {
     if (displayStreamRef.current) {
       const videoTrack = displayStreamRef.current.getVideoTracks()[0];
-      if (videoTrack && videoTrack.readyState === "live") {
+      const hasRequestedAudio = !includeAudio || displayStreamRef.current.getAudioTracks().length > 0;
+      if (videoTrack && videoTrack.readyState === "live" && hasRequestedAudio) {
         return displayStreamRef.current;
       }
       // Stale stream (ended/invalid), drop it and reacquire.
@@ -475,14 +545,14 @@ export function RecordingProvider({ children }: { children: React.ReactNode }) {
         video: {
           frameRate: 30
         },
-        audio: false
+        audio: includeAudio
       });
     } catch (err) {
       const e = err as DOMException | Error | undefined;
       // Compatibility fallback for runtimes that reject structured video constraints.
       if (e?.name === "NotSupportedError" || e?.name === "TypeError") {
         try {
-          stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+          stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: includeAudio });
         } catch (err2) {
           const e2 = err2 as DOMException | Error | undefined;
           // Final Electron-specific fallback via desktopCapturer source IDs.
@@ -536,7 +606,7 @@ export function RecordingProvider({ children }: { children: React.ReactNode }) {
   const handleChooseDesktop = async () => {
     try {
       setError("");
-      await ensureDisplayStream();
+      await ensureDisplayStream(wantsSystemAudio(audioSource) && isDesktopRecordMode(mode));
       setStatus("Desktop source ready");
     } catch {
       setError("Unable to capture desktop. Please grant screen recording permission.");
@@ -551,12 +621,34 @@ export function RecordingProvider({ children }: { children: React.ReactNode }) {
     setError("");
     try {
       let outputStream: MediaStream;
+      let micStream: MediaStream | null = null;
+      let micTrack: MediaStreamTrack | null = null;
+      const allowSystemAudio = isDesktopRecordMode(mode) && wantsSystemAudio(audioSource);
+      const allowMicAudio = wantsMicAudio(audioSource) || (mode === "camera" && audioSource === "system");
+      if (allowMicAudio) {
+        window.dispatchEvent(new Event("tablecam-stop-mic-meter"));
+        await new Promise((resolve) => window.setTimeout(resolve, 120));
+        try {
+          micStream = await getMicStream();
+          micStreamRef.current = micStream;
+          micTrack = micStream.getAudioTracks()[0] || null;
+        } catch {
+          await new Promise((resolve) => window.setTimeout(resolve, 180));
+          try {
+            micStream = await getMicStream();
+            micStreamRef.current = micStream;
+            micTrack = micStream.getAudioTracks()[0] || null;
+          } catch {
+            setStatus("Recording without microphone (mic permission denied or device busy).");
+          }
+        }
+      }
       if (mode === "camera") {
         const camStream = await getCameraStream();
         cameraStreamRef.current = camStream;
-        outputStream = camStream;
+        outputStream = new MediaStream([...camStream.getVideoTracks(), ...(micTrack ? [micTrack] : [])]);
       } else {
-        const displayStream = await ensureDisplayStream();
+        const displayStream = await ensureDisplayStream(allowSystemAudio);
         const liveVideoTrack = displayStream.getVideoTracks()[0];
         if (!liveVideoTrack || liveVideoTrack.readyState !== "live") {
           throw new Error("DisplayCaptureNotLive");
@@ -582,7 +674,7 @@ export function RecordingProvider({ children }: { children: React.ReactNode }) {
           throw new Error("Canvas context unavailable");
         }
         let pipVideo: HTMLVideoElement | null = null;
-        if (pipEnabled) {
+        if (mode === "both") {
           const pipStream = await getCameraStream("pip");
           cameraStreamRef.current = pipStream;
           pipVideo = document.createElement("video");
@@ -592,7 +684,7 @@ export function RecordingProvider({ children }: { children: React.ReactNode }) {
           await pipVideo.play();
         }
 
-        const targetFps = 30;
+        const targetFps = 24;
         const frameIntervalMs = 1000 / targetFps;
 
         const drawFrame = (ts: number) => {
@@ -632,25 +724,28 @@ export function RecordingProvider({ children }: { children: React.ReactNode }) {
           lastDrawTsRef.current = 0;
           drawRafRef.current = window.requestAnimationFrame(drawFrame);
         };
-        outputStream = canvas.captureStream(30);
-        if (micEnabled) {
-          try {
-            const micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-            micStreamRef.current = micStream;
-            micStream.getAudioTracks().forEach((track) => outputStream.addTrack(track));
-          } catch {
-            setStatus("Recording without microphone (mic permission denied).");
-          }
+        outputStream = canvas.captureStream(targetFps);
+        const systemTracks = allowSystemAudio ? displayStream.getAudioTracks().filter((t) => t.readyState === "live") : [];
+        if (allowSystemAudio && systemTracks.length === 0) {
+          setStatus("System audio unavailable for selected source; recording available audio only.");
+        }
+        if (systemTracks.length > 0 || micTrack) {
+          outputStream = new MediaStream([...outputStream.getVideoTracks(), ...systemTracks, ...(micTrack ? [micTrack] : [])]);
         }
       }
 
-      const picked = pickRecordingMimeByPreference(format);
+      const hasAudioTrack = outputStream.getAudioTracks().length > 0;
+      const picked = pickRecordingMimeByPreference(format, hasAudioTrack);
       const mimeType = picked.mimeType;
       const useMp4 = picked.ext === "mp4";
 
-      const recorder = new MediaRecorder(outputStream, { mimeType });
+      const recorder = new MediaRecorder(outputStream, {
+        mimeType,
+        ...(hasAudioTrack ? { audioBitsPerSecond: 128000 } : {})
+      });
       recorderRef.current = recorder;
       chunksRef.current = [];
+
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
           chunksRef.current.push(event.data);
@@ -663,8 +758,6 @@ export function RecordingProvider({ children }: { children: React.ReactNode }) {
         }
         stopAllTracks(cameraStreamRef.current);
         cameraStreamRef.current = null;
-        stopAllTracks(micStreamRef.current);
-        micStreamRef.current = null;
         lockedScreenRectRef.current = null;
 
         const blobType = useMp4 ? "video/mp4" : "video/webm";
@@ -676,6 +769,8 @@ export function RecordingProvider({ children }: { children: React.ReactNode }) {
           requestedFormat: format,
           sourceExt: useMp4 ? "mp4" : "webm"
         });
+        stopAllTracks(micStreamRef.current);
+        micStreamRef.current = null;
         if (result?.ok) {
           setStatus(`Saved ${result.savedPath}`);
         } else if (result?.canceled) {
@@ -702,7 +797,7 @@ export function RecordingProvider({ children }: { children: React.ReactNode }) {
       setStatus("Recording...");
     } catch (err) {
       const e = err as Error | DOMException | undefined;
-      if (e?.message === "DisplayCaptureNotLive") {
+      if (e?.message === "DisplayCaptureNotLive" && isDesktopRecordMode(mode)) {
         setError("Desktop source is not active. Click 'Select Desktop Source' and choose a screen/window again.");
       } else {
         setError(toUserError(err, mode));
@@ -826,10 +921,8 @@ export function RecordingProvider({ children }: { children: React.ReactNode }) {
     setAspect,
     format,
     setFormat,
-    micEnabled,
-    setMicEnabled,
-    pipEnabled,
-    setPipEnabled,
+    audioSource,
+    setAudioSource,
     sessionActive: recording,
     capturePaused,
     elapsedLabel,
