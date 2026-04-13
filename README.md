@@ -17,6 +17,26 @@ It provides a floating camera overlay (always on top) and a practical screen rec
 
 ---
 
+## What Changed In This Push
+
+Compared with the previous pushed version, this release focuses on recording audio reliability and permission clarity:
+
+- Added **audio source selection** in the Record panel:
+  - `None`
+  - `Microphone only`
+  - `System audio only` (desktop recording modes)
+  - `Microphone + system audio`
+- Moved and improved **audio testing** around the audio selection area:
+  - live microphone input level meter
+  - one-click sound test (short record + playback)
+- Added explicit **macOS microphone permission diagnostics and request flow**:
+  - show current microphone permission status in UI
+  - request microphone access directly from the Record panel
+- Improved recording pipeline to keep **normal playback timing** (avoid slowed audio in exported videos).
+- Updated packaging/version to current release artifact: `TableCam-v0.4.18-darwin-x64.zip`.
+
+---
+
 ## Why TableCam
 
 Many screen recording tools either hide camera controls behind complex menus or make the overlay hard to manage while presenting.  
